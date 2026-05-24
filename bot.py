@@ -419,6 +419,172 @@ def handle_menu_clicks(call):
         bot.send_message(user_id, f"💎 <b>لیست طرح‌ها و خرید اکانت اختصاصی:</b>\n\n👛 موجودی کیف پول شما: <b>{user_balance:,} تومان</b>\n\nلطفاً پلن مورد نظر را انتخاب کنید. اگر موجودی داشته باشید مستقیماً کسر می‌شود، در غیر این‌صورت می‌توانید حساب خود را شارژ کنید:", parse_mode="HTML", reply_markup=markup)
 
     elif action == "menu_wallet":
+        user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetchonese:
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state == 'unban_id':
+        ADMIN_STATES[ADMIN_ID] = None
+        if message.text.isdigit():
+            target_id = int(message.text)
+            user_exist = db_execute("SELECT user_id FROM users WHERE user_id = ?", (target_id,), fetchone=True)
+            if user_exist:
+                db_execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,), commit=True)
+                bot.send_message(ADMIN_ID, f"✅ کاربر {target_id} با موفقیت آزاد (آن‌بن) شد.")
+            else:
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state == 'direct_user_id':
+        if message.text.isdigit():
+            target_id = int(message.text)
+            user_exist = db_execute("SELECT user_id FROM users WHERE user_id = ?", (target_id,), fetchone=True)
+            if user_exist:
+                ADMIN_STATES[ADMIN_ID] = f"direct_msg_text:{target_id}"
+                bot.send_message(ADMIN_ID, f"✍️ اکنون پیام خود را برای ارسال به کاربر {target_id} بفرستید:")
+            else:
+                ADMIN_STATES[ADMIN_ID] = None
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            ADMIN_STATES[ADMIN_ID] = None
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state and state.startswith("direct_msg_text:"):
+        target_id = int(state.split(":")[1])
+        ADMIN_STATES[ADMIN_ID] = None
+        try:
+            bot.send_message(target_id, message.text)
+            bot.send_message(ADMIN_ID, f"✅ پیام شما با موفقیت به کاربر {target_id} ارسال شد.")
+        except Exception as e:
+            bot.send_message(ADMIN_ID, f"❌ خطایی در ارسال پیام رخ داد. ممکن است ربات توسط کاربر بلاک شده باشد.\nجزئیات: {e}")
+
+def process_user_entry(user_id, start_param):
+    if start_param and not start_param.isdigit():
+        link_data = db_execute("SELECT capacity, used_count FROM links WHERE link_name = ?", (start_param,), fetchone=True)
+        
+        if link_data:
+            capacity, used_count = link_data
+            if used_count >= capacity:
+                bot.send_message(user_id, "❌ متاسفانه ظرفیت هدیه این لینک اختصاصی به پایان رسیده است.", reply_markup=main_menu_inline())
+                return
+                
+            has_free = db_execute("SELECT has_received_free FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+            
+            if has_free == 0:
+                db_execute("UPDATE links SET used_count = used_count + 1 WHERE link_name = ?", (start_param,), commit=True)
+                db_execute("UPDATE users SET has_received_free = 1 WHERE user_id = ?", (user_id,), commit=True)
+                
+                user_config = generate_unique_config(user_id)
+                db_execute("INSERT INTO services (id, user_id, plan_name, config_text, date_added) VALUES (?, ?, ?, ?, datetime('now'))", (str(uuid.uuid4())[:8], user_id, "هدیه ورود اختصاصی", user_config), commit=True)
+                bot.send_message(user_id, f"🎉 <b>هدیه ویژه کانال فعال شد!</b>\n\nکانفیگ اختصاصی شما:\n\n<code>{user_config}</code>", parse_mode="HTML", reply_markup=main_menu_inline())
+            else:
+                bot.send_message(user_id, "❌ شما قبلاً هدیه رایگان ورود خود را دریافت کرده‌اید.", reply_markup=main_menu_inline())
+            return
+        else:
+            bot.send_message(user_id, "❌ این لینک اختصاصی نامعتبر است.", reply_markup=main_menu_inline())
+            return
+
+    bot.send_message(user_id, "👋 به ربات هوشمند ما خوش آمدید.\n\nلطفاً یکی از گزینه‌های زیر را جهت ادامه انتخاب کنید:", reply_markup=main_menu_inline())
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_main")
+def back_to_main_callback(call):
+    bot.clear_step_handler_by_chat_id(chat_id=call.message.chat.id)
+    try:
+        bot.edit_message_text("👋 به منوی اصلی بازگشتید.\nلطفاً یکی از گزینه‌های زیر را جهت ادامه انتخاب کنید:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=main_menu_inline())
+    except Exception:
+        bot.send_message(call.message.chat.id, "👋 به منوی اصلی بازگشتید:", reply_markup=main_menu_inline())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("check_join:"))
+def check_join_callback(call):
+    user_id = call.from_user.id
+    start_param = call.data.split(":")[1]
+    
+    if check_membership(user_id):
+        try:
+            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+        except Exception:
+            pass
+        
+        ref_data = db_execute("SELECT referred_by FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+        if ref_data and ref_data[0]:
+            inviter_id = ref_data[0]
+            db_execute("UPDATE users SET invite_count = invite_count + 1 WHERE user_id = ?", (inviter_id,), commit=True)
+            try:
+                bot.send_message(inviter_id, "🎉 تبریک! یک کاربر جدید با لینک شما عضو شد و ۱ امتیاز دعوت دریافت کردید.")
+            except Exception:
+                pass
+            db_execute("UPDATE users SET referred_by = NULL WHERE user_id = ?", (user_id,), commit=True)
+
+        process_user_entry(user_id, start_param)
+    else:
+        bot.answer_callback_query(call.id, "❌ هنوز عضو کانال نشده‌اید!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
+def handle_menu_clicks(call):
+    user_id = call.from_user.id
+    first_name = call.from_user.first_name or "کاربر"
+    action = call.data
+    
+    if not check_membership(user_id):
+        bot.send_message(user_id, "⚠️ شما ابتدا باید در کانال عضو شوید.", reply_markup=join_keyboard())
+        return
+
+    try:
+        button_name = MENU_TITLES.get(action, action)
+        bot.send_message(ADMIN_ID, f"🎯 <b>گزارش:</b>\nکاربر <a href='tg://user?id={user_id}'>{first_name}</a> (<code>{user_id}</code>) روی گزینه <b>[{button_name}]</b> کلیک کرد.", parse_mode="HTML")
+    except Exception:
+        pass
+
+    if action == "menu_get_config":
+        invite_count = db_execute("SELECT invite_count FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        
+        if invite_count >= 15:
+            new_count = invite_count - 15
+            db_execute("UPDATE users SET invite_count = ? WHERE user_id = ?", (new_count, user_id), commit=True)
+            
+            user_config = generate_unique_config(user_id)
+            db_execute("INSERT INTO services (id, user_id, plan_name, config_text, date_added) VALUES (?, ?, ?, ?, datetime('now'))", (str(uuid.uuid4())[:8], user_id, "۱ گیگابایت (رفرال)", user_config), commit=True)
+            
+            msg_text = f"🎉 <b>تعداد دعوت‌های شما تایید شد!</b>\n\n" \
+                       f"کانفیگ شما صادر و در بخش 'کانفیگ‌های من' ذخیره شد:\n\n" \
+                       f"<code>{user_config}</code>\n\n" \
+                       f"در صورت کار نکردن کانفیگ شما در قسمت پشتیبانی پیام ارسال کنید تا سرور جایگزین خدمتتون ارسال بشه\n" \
+                       f"در صورت تشخیص رفرال فیک توسط شما سرور خودکار سرور غلط ارسال میکند اگر غیر این صورته و فیک نیست به پشتیبانی پیام بدید"
+                       
+            bot.send_message(user_id, msg_text, parse_mode="HTML", reply_markup=back_to_menu_markup())
+        else:
+            bot.send_message(user_id, f"❌ <b>تعداد دعوت‌های شما کافی نیست!</b>\n\nشما در حال حاضر {invite_count} دعوت فعال دارید. برای دریافت کانفیگ یک گیگابایتی تایم نامحدود به حداقل 15 دعوت نیاز دارید.", parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_referral":
+        bot_info = bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+        invite_count = db_execute("SELECT invite_count FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        
+        msg = f"👥 <b>سیستم زیرمجموعه‌گیری</b>\n\n🔗 لینک اختصاصی شما:\n<code>{ref_link}</code>\n\n📊 آمار دعوت‌های شما: <b>{invite_count}</b> نفر\n✨ با دعوت هر 15 نفر، می‌توانید ۱ کانفیگ یک گیگابایتی جدید دریافت کنید."
+        bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_my_services":
+        services = db_execute("SELECT plan_name, config_text, date_added FROM services WHERE user_id = ? ORDER BY date_added DESC", (user_id,), fetchall=True)
+        if not services:
+            bot.send_message(user_id, "❌ شما در حال حاضر هیچ کانفیگ فعال یا خریداری شده‌ای در سیستم ندارید.", reply_markup=back_to_menu_markup())
+        else:
+            msg = "📦 <b>لیست سرویس‌ها و کانفیگ‌های شما:</b>\n\n"
+            for i, svc in enumerate(services, 1):
+                msg += f"{i}. <b>{svc[0]}</b>\n📅 تاریخ: {svc[2]}\n<code>{svc[1]}</code>\n\n"
+            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_plans":
+        user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for plan_id, plan_info in PLANS.items():
+            markup.add(types.InlineKeyboardButton(f"🛒 {plan_info['name']} ➡️ {plan_info['toman_price']:,} تومان", callback_data=f"buy_{plan_id}"))
+        
+        markup.add(types.InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="back_to_main"))
+        bot.send_message(user_id, f"💎 <b>لیست طرح‌ها و خرید اکانت اختصاصی:</b>\n\n👛 موجودی کیف پول شما: <b>{user_balance:,} تومان</b>\n\nلطفاً پلن مورد نظر را انتخاب کنید. اگر موجودی داشته باشید مستقیماً کسر می‌شود، در غیر این‌صورت می‌توانید حساب خود را شارژ کنید:", parse_mode="HTML", reply_markup=markup)
+
+    elif action == "menu_wallet":
         user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?"(, (user_id,), fetchon    referred_by INTEGER,
     invite_count INTEGER DEFAULT 0,
     has_received_free INTEGER DEFAULT 0,
