@@ -419,6 +419,391 @@ def handle_menu_clicks(call):
         bot.send_message(user_id, f"💎 <b>لیست طرح‌ها و خرید اکانت اختصاصی:</b>\n\n👛 موجودی کیف پول شما: <b>{user_balance:,} تومان</b>\n\nلطفاً پلن مورد نظر را انتخاب کنید. اگر موجودی داشته باشید مستقیماً کسر می‌شود، در غیر این‌صورت می‌توانید حساب خود را شارژ کنید:", parse_mode="HTML", reply_markup=markup)
 
     elif action == "menu_wallet":
+        user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?"(, (user_id,), fetchon    referred_by INTEGER,
+    invite_count INTEGER DEFAULT 0,
+    has_received_free INTEGER DEFAULT 0,
+    balance INTEGER DEFAULT 0,
+    is_banned INTEGER DEFAULT 0
+)
+""", commit=True)
+
+db_execute("""
+CREATE TABLE IF NOT EXISTS services (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER,
+    plan_name TEXT,
+    config_text TEXT,
+    date_added TEXT
+)
+""", commit=True)
+
+try:
+    db_execute("ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0", commit=True)
+except sqlite3.OperationalError:
+    pass
+
+try:
+    db_execute("ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0", commit=True)
+except sqlite3.OperationalError:
+    pass
+
+db_execute("""
+CREATE TABLE IF NOT EXISTS links (
+    link_name TEXT PRIMARY KEY,
+    capacity INTEGER,
+    used_count INTEGER DEFAULT 0
+)
+""", commit=True)
+
+db_execute("""
+CREATE TABLE IF NOT EXISTS transactions (
+    tx_id TEXT PRIMARY KEY,
+    user_id INTEGER,
+    plan_name TEXT,
+    amount_trx REAL,
+    status TEXT DEFAULT 'pending'
+)
+""", commit=True)
+
+try:
+    db_execute("ALTER TABLE transactions ADD COLUMN amount_trx REAL", commit=True)
+except sqlite3.OperationalError:
+    pass
+
+PLANS = {
+    "plan_1gb":  {"name": "۱ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 180000},
+    "plan_2gb":  {"name": "۲ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 360000},
+    "plan_3gb":  {"name": "۳ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 540000},
+    "plan_4gb":  {"name": "۴ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 720000},
+    "plan_5gb":  {"name": "۵ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 900000},
+    "plan_6gb":  {"name": "۶ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 1080000},
+    "plan_7gb":  {"name": "۷ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 1260000},
+    "plan_8gb":  {"name": "۸ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 1440000},
+    "plan_9gb":  {"name": "۹ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 1620000},
+    "plan_10gb": {"name": "۱۰ گیگابایت (کاربر و زمان نامحدود)", "toman_price": 1800000}
+}
+
+MENU_TITLES = {
+    "menu_get_config": "🚀 دریافت کانفیگ رایگان",
+    "menu_plans": "💎 خرید اکانت اختصاصی",
+    "menu_referral": "👥 زیرمجموعه‌گیری / رفرال",
+    "menu_wallet": "💳 افزایش موجودی",
+    "menu_my_services": "📦 کانفیگ‌های من",
+    "menu_support": "🛠 پشتیبانی آنلاین"
+}
+
+def setup_links():
+    db_execute("INSERT OR IGNORE INTO links (link_name, capacity) VALUES (?, ?)", ("link10", 2), commit=True)
+
+setup_links()
+
+def generate_unique_config(user_id):
+    unique_id = str(uuid.uuid4())
+    server_details = "varzesh3.com:80?type=ws&path=%2F&host=kabotar.garfar.ir&security=none"
+    return f"vless://{unique_id}@{server_details}#User-{user_id}"
+
+def check_membership(user_id):
+    try:
+        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception:
+        return False
+
+def is_user_banned(user_id):
+    res = db_execute("SELECT is_banned FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+    if res and res[0] == 1:
+        return True
+    return False
+
+def main_menu_inline():
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("🚀 دریافت کانفیگ رایگان", callback_data="menu_get_config"),
+        types.InlineKeyboardButton("💎 خرید اکانت اختصاصی", callback_data="menu_plans"),
+        types.InlineKeyboardButton("📦 کانفیگ‌های من", callback_data="menu_my_services"),
+        types.InlineKeyboardButton("👥 زیرمجموعه‌گیری / رفرال", callback_data="menu_referral"),
+        types.InlineKeyboardButton("💳 افزایش موجودی", callback_data="menu_wallet"),
+        types.InlineKeyboardButton("🛠 پشتیبانی آنلاین", callback_data="menu_support")
+    )
+    return markup
+
+def join_keyboard(start_param=""):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("ورود به کانال اسپانسر 📢", url=f"https://t.me/{CHANNEL_ID.replace('@','')}"))
+    markup.add(types.InlineKeyboardButton("عضو شدم! بررسی کن ✅", callback_data=f"check_join:{start_param}"))
+    return markup
+
+def back_to_menu_markup():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="back_to_main"))
+    return markup
+
+@bot.message_handler(func=lambda message: is_user_banned(message.from_user.id))
+def handle_banned_users(message):
+    try:
+        bot.send_message(message.from_user.id, "❌ حساب کاربری شما در این ربات مسدود شده است.")
+    except Exception:
+        pass
+
+@bot.callback_query_handler(func=lambda call: is_user_banned(call.from_user.id))
+def handle_banned_callbacks(call):
+    try:
+        bot.answer_callback_query(call.id, "❌ حساب کاربری شما مسدود شده است.", show_alert=True)
+    except Exception:
+        pass
+
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    user_id = message.from_user.id
+    if is_user_banned(user_id):
+        return
+    first_name = message.from_user.first_name or "کاربر"
+    text_args = message.text.split()
+    start_param = text_args[1] if len(text_args) > 1 else ""
+    
+    try:
+        log_param = f" با پارامتر [{start_param}]" if start_param else ""
+        bot.send_message(ADMIN_ID, f"👣 <b>گزارش:</b>\nکاربر <a href='tg://user?id={user_id}'>{first_name}</a> (<code>{user_id}</code>) ربات را استارت کرد{log_param}.", parse_mode="HTML")
+    except Exception:
+        pass
+
+    user = db_execute("SELECT * FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+    
+    if not user:
+        referred_by = None
+        if start_param.isdigit() and int(start_param) != user_id:
+            referred_by = int(start_param)
+                
+        db_execute("INSERT OR IGNORE INTO users (user_id, referred_by, balance, is_banned) VALUES (?, ?, 0, 0)", (user_id, referred_by), commit=True)
+
+    if not check_membership(user_id):
+        bot.send_message(user_id, "<b>⚠️ جهت استفاده از خدمات ربات و دریافت کانفیگ، ابتدا باید در کانال زیر عضو شوید:</b>", parse_mode="HTML", reply_markup=join_keyboard(start_param))
+        return
+
+    process_user_entry(user_id, start_param)
+
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    users_count = db_execute("SELECT COUNT(*) FROM users", fetchone=True)[0]
+    pending_txs = db_execute("SELECT COUNT(*) FROM transactions WHERE status = 'pending'", fetchone=True)[0]
+    
+    msg = f"⚙️ <b>پنل مدیریت ربات ققنوس</b>\n\n" \
+          f"📊 تعداد کل کاربران: {users_count} نفر\n" \
+          f"⏳ تراکنش‌های در انتظار تایید: {pending_txs}\n" \
+          f"💰 نرخ فعلی ترون: {TRX_PRICE_IN_TOMAN:,} تومان"
+          
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data="adm_broadcast"),
+        types.InlineKeyboardButton("💵 تغییر قیمت ترون", callback_data="adm_change_trx"),
+        types.InlineKeyboardButton("🚫 مدیریت مسدودسازی (بن)", callback_data="adm_ban_menu"),
+        types.InlineKeyboardButton("📩 ارسال پیام اختصاصی به کاربر", callback_data="adm_send_direct"),
+        types.InlineKeyboardButton("↩️ بسته شدن پنل ادمین", callback_data="adm_close")
+    )
+    bot.send_message(ADMIN_ID, msg, parse_mode="HTML", reply_markup=markup)
+
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and ADMIN_STATES.get(ADMIN_ID) in ['broadcast', 'change_trx', 'ban_id', 'unban_id', 'direct_user_id', 'direct_msg_text'])
+def handle_admin_inputs(message):
+    state = ADMIN_STATES.get(ADMIN_ID)
+    if state == 'broadcast':
+        ADMIN_STATES[ADMIN_ID] = None
+        users = db_execute("SELECT user_id FROM users", fetchall=True)
+        bot.send_message(ADMIN_ID, "⏳ فرآیند ارسال پیام همگانی آغاز شد...")
+        success, failed = 0, 0
+        for u in users:
+            try:
+                bot.send_message(u[0], message.text)
+                success += 1
+            except Exception:
+                failed += 1
+        bot.send_message(ADMIN_ID, f"✅ ارسال به پایان رسید.\n📥 موفق: {success}\n❌ ناموفق (بلاک): {failed}")
+        
+    elif state == 'change_trx':
+        ADMIN_STATES[ADMIN_ID] = None
+        if message.text.isdigit():
+            global TRX_PRICE_IN_TOMAN
+            TRX_PRICE_IN_TOMAN = int(message.text)
+            bot.send_message(ADMIN_ID, f"✅ قیمت ترون با موفقیت به {TRX_PRICE_IN_TOMAN:,} تومان تغییر یافت.")
+        else:
+            bot.send_message(ADMIN_ID, "❌ مقدار وارد شده معتبر نیست. باید عدد انگلیسی وارد کنید.")
+
+    elif state == 'ban_id':
+        ADMIN_STATES[ADMIN_ID] = None
+        if message.text.isdigit():
+            target_id = int(message.text)
+            user_exist = db_execute("SELECT user_id FROM users WHERE user_id = ?", (target_id,), fetchone=True)
+            if user_exist:
+                db_execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,), commit=True)
+                bot.send_message(ADMIN_ID, f"✅ کاربر {target_id} با موفقیت مسدود (بن) شد.")
+            else:
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state == 'unban_id':
+        ADMIN_STATES[ADMIN_ID] = None
+        if message.text.isdigit():
+            target_id = int(message.text)
+            user_exist = db_execute("SELECT user_id FROM users WHERE user_id = ?", (target_id,), fetchone=True)
+            if user_exist:
+                db_execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,), commit=True)
+                bot.send_message(ADMIN_ID, f"✅ کاربر {target_id} با موفقیت آزاد (آن‌بن) شد.")
+            else:
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state == 'direct_user_id':
+        if message.text.isdigit():
+            target_id = int(message.text)
+            user_exist = db_execute("SELECT user_id FROM users WHERE user_id = ?", (target_id,), fetchone=True)
+            if user_exist:
+                ADMIN_STATES[ADMIN_ID] = f"direct_msg_text:{target_id}"
+                bot.send_message(ADMIN_ID, f"✍️ اکنون پیام خود را برای ارسال به کاربر {target_id} بفرستید:")
+            else:
+                ADMIN_STATES[ADMIN_ID] = None
+                bot.send_message(ADMIN_ID, "❌ این آیدی عددی در دیتابیس ربات یافت نشد.")
+        else:
+            ADMIN_STATES[ADMIN_ID] = None
+            bot.send_message(ADMIN_ID, "❌ آیدی عددی وارد شده معتبر نیست.")
+
+    elif state and state.startswith("direct_msg_text:"):
+        target_id = int(state.split(":")[1])
+        ADMIN_STATES[ADMIN_ID] = None
+        try:
+            bot.send_message(target_id, message.text)
+            bot.send_message(ADMIN_ID, f"✅ پیام شما با موفقیت به کاربر {target_id} ارسال شد.")
+        except Exception as e:
+            bot.send_message(ADMIN_ID, f"❌ خطایی در ارسال پیام رخ داد. ممکن است ربات توسط کاربر بلاک شده باشد.\nجزئیات: {e}")
+
+def process_user_entry(user_id, start_param):
+    if start_param and not start_param.isdigit():
+        link_data = db_execute("SELECT capacity, used_count FROM links WHERE link_name = ?", (start_param,), fetchone=True)
+        
+        if link_data:
+            capacity, used_count = link_data
+            if used_count >= capacity:
+                bot.send_message(user_id, "❌ متاسفانه ظرفیت هدیه این لینک اختصاصی به پایان رسیده است.", reply_markup=main_menu_inline())
+                return
+                
+            has_free = db_execute("SELECT has_received_free FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+            
+            if has_free == 0:
+                db_execute("UPDATE links SET used_count = used_count + 1 WHERE link_name = ?", (start_param,), commit=True)
+                db_execute("UPDATE users SET has_received_free = 1 WHERE user_id = ?", (user_id,), commit=True)
+                
+                user_config = generate_unique_config(user_id)
+                db_execute("INSERT INTO services (id, user_id, plan_name, config_text, date_added) VALUES (?, ?, ?, ?, datetime('now'))", (str(uuid.uuid4())[:8], user_id, "هدیه ورود اختصاصی", user_config), commit=True)
+                bot.send_message(user_id, f"🎉 <b>هدیه ویژه کانال فعال شد!</b>\n\nکانفیگ اختصاصی شما:\n\n<code>{user_config}</code>", parse_mode="HTML", reply_markup=main_menu_inline())
+            else:
+                bot.send_message(user_id, "❌ شما قبلاً هدیه رایگان ورود خود را دریافت کرده‌اید.", reply_markup=main_menu_inline())
+            return
+        else:
+            bot.send_message(user_id, "❌ این لینک اختصاصی نامعتبر است.", reply_markup=main_menu_inline())
+            return
+
+    bot.send_message(user_id, "👋 به ربات هوشمند ما خوش آمدید.\n\nلطفاً یکی از گزینه‌های زیر را جهت ادامه انتخاب کنید:", reply_markup=main_menu_inline())
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_main")
+def back_to_main_callback(call):
+    bot.clear_step_handler_by_chat_id(chat_id=call.message.chat.id)
+    try:
+        bot.edit_message_text("👋 به منوی اصلی بازگشتید.\nلطفاً یکی از گزینه‌های زیر را جهت ادامه انتخاب کنید:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=main_menu_inline())
+    except Exception:
+        bot.send_message(call.message.chat.id, "👋 به منوی اصلی بازگشتید:", reply_markup=main_menu_inline())
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("check_join:"))
+def check_join_callback(call):
+    user_id = call.from_user.id
+    start_param = call.data.split(":")[1]
+    
+    if check_membership(user_id):
+        try:
+            bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+        except Exception:
+            pass
+        
+        ref_data = db_execute("SELECT referred_by FROM users WHERE user_id = ?", (user_id,), fetchone=True)
+        if ref_data and ref_data[0]:
+            inviter_id = ref_data[0]
+            db_execute("UPDATE users SET invite_count = invite_count + 1 WHERE user_id = ?", (inviter_id,), commit=True)
+            try:
+                bot.send_message(inviter_id, "🎉 تبریک! یک کاربر جدید با لینک شما عضو شد و ۱ امتیاز دعوت دریافت کردید.")
+            except Exception:
+                pass
+            db_execute("UPDATE users SET referred_by = NULL WHERE user_id = ?", (user_id,), commit=True)
+
+        process_user_entry(user_id, start_param)
+    else:
+        bot.answer_callback_query(call.id, "❌ هنوز عضو کانال نشده‌اید!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("menu_"))
+def handle_menu_clicks(call):
+    user_id = call.from_user.id
+    first_name = call.from_user.first_name or "کاربر"
+    action = call.data
+    
+    if not check_membership(user_id):
+        bot.send_message(user_id, "⚠️ شما ابتدا باید در کانال عضو شوید.", reply_markup=join_keyboard())
+        return
+
+    try:
+        button_name = MENU_TITLES.get(action, action)
+        bot.send_message(ADMIN_ID, f"🎯 <b>گزارش:</b>\nکاربر <a href='tg://user?id={user_id}'>{first_name}</a> (<code>{user_id}</code>) روی گزینه <b>[{button_name}]</b> کلیک کرد.", parse_mode="HTML")
+    except Exception:
+        pass
+
+    if action == "menu_get_config":
+        invite_count = db_execute("SELECT invite_count FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        
+        if invite_count >= 15:
+            new_count = invite_count - 15
+            db_execute("UPDATE users SET invite_count = ? WHERE user_id = ?", (new_count, user_id), commit=True)
+            
+            user_config = generate_unique_config(user_id)
+            db_execute("INSERT INTO services (id, user_id, plan_name, config_text, date_added) VALUES (?, ?, ?, ?, datetime('now'))", (str(uuid.uuid4())[:8], user_id, "۱ گیگابایت (رفرال)", user_config), commit=True)
+            
+            msg_text = f"🎉 <b>تعداد دعوت‌های شما تایید شد!</b>\n\n" \
+                       f"کانفیگ شما صادر و در بخش 'کانفیگ‌های من' ذخیره شد:\n\n" \
+                       f"<code>{user_config}</code>\n\n" \
+                       f"در صورت کار نکردن کانفیگ شما در قسمت پشتیبانی پیام ارسال کنید تا سرور جایگزین خدمتتون ارسال بشه\n" \
+                       f"در صورت تشخیص رفرال فیک توسط شما سرور خودکار سرور غلط ارسال میکند اگر غیر این صورته و فیک نیست به پشتیبانی پیام بدید"
+                       
+            bot.send_message(user_id, msg_text, parse_mode="HTML", reply_markup=back_to_menu_markup())
+        else:
+            bot.send_message(user_id, f"❌ <b>تعداد دعوت‌های شما کافی نیست!</b>\n\nشما در حال حاضر {invite_count} دعوت فعال دارید. برای دریافت کانفیگ یک گیگابایتی تایم نامحدود به حداقل 15 دعوت نیاز دارید.", parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_referral":
+        bot_info = bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+        invite_count = db_execute("SELECT invite_count FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        
+        msg = f"👥 <b>سیستم زیرمجموعه‌گیری</b>\n\n🔗 لینک اختصاصی شما:\n<code>{ref_link}</code>\n\n📊 آمار دعوت‌های شما: <b>{invite_count}</b> نفر\n✨ با دعوت هر 15 نفر، می‌توانید ۱ کانفیگ یک گیگابایتی جدید دریافت کنید."
+        bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_my_services":
+        services = db_execute("SELECT plan_name, config_text, date_added FROM services WHERE user_id = ? ORDER BY date_added DESC", (user_id,), fetchall=True)
+        if not services:
+            bot.send_message(user_id, "❌ شما در حال حاضر هیچ کانفیگ فعال یا خریداری شده‌ای در سیستم ندارید.", reply_markup=back_to_menu_markup())
+        else:
+            msg = "📦 <b>لیست سرویس‌ها و کانفیگ‌های شما:</b>\n\n"
+            for i, svc in enumerate(services, 1):
+                msg += f"{i}. <b>{svc[0]}</b>\n📅 تاریخ: {svc[2]}\n<code>{svc[1]}</code>\n\n"
+            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=back_to_menu_markup())
+
+    elif action == "menu_plans":
+        user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetchone=True)[0]
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for plan_id, plan_info in PLANS.items():
+            markup.add(types.InlineKeyboardButton(f"🛒 {plan_info['name']} ➡️ {plan_info['toman_price']:,} تومان", callback_data=f"buy_{plan_id}"))
+        
+        markup.add(types.InlineKeyboardButton("↩️ بازگشت به منوی اصلی", callback_data="back_to_main"))
+        bot.send_message(user_id, f"💎 <b>لیست طرح‌ها و خرید اکانت اختصاصی:</b>\n\n👛 موجودی کیف پول شما: <b>{user_balance:,} تومان</b>\n\nلطفاً پلن مورد نظر را انتخاب کنید. اگر موجودی داشته باشید مستقیماً کسر می‌شود، در غیر این‌صورت می‌توانید حساب خود را شارژ کنید:", parse_mode="HTML", reply_markup=markup)
+
+    elif action == "menu_wallet":
         user_balance = db_execute("SELECT balance FROM users WHERE user_id = ?", (user_id,), fetchone
             return
 
